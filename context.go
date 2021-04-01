@@ -2,6 +2,7 @@ package contextimpl
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -75,4 +76,62 @@ func WithCancel(parent Context) (Context, CancelFunc) {
 	}()
 
 	return ctx, cancel
+}
+
+type DeadlineCtx struct {
+	*cancelCtx
+	deadline time.Time
+}
+
+func (ctx *DeadlineCtx) Deadline() (deadline time.Time, ok bool) {
+	return ctx.deadline, true
+}
+
+var DeadlineExceeded = errors.New("deadline exceeded")
+
+func WithDeadline(parent Context, deadline time.Time) (Context, CancelFunc) {
+	cctx, cancel := WithCancel(parent)
+
+	ctx := &DeadlineCtx{
+		cancelCtx: cctx.(*cancelCtx),
+		deadline:  deadline,
+	}
+	t := time.AfterFunc(time.Until(deadline), func() { ctx.cancel(DeadlineExceeded) })
+
+	stop := func() {
+		t.Stop()
+		cancel()
+	}
+
+	return ctx, stop
+}
+
+func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
+	return WithDeadline(parent, time.Now().Add(timeout))
+}
+
+type valueContext struct {
+	Context
+	key, value interface{}
+}
+
+func (ctx *valueContext) Value(key interface{}) interface{} {
+	if ctx.key == key {
+		return ctx.value
+	}
+	return ctx.Context.Value(key)
+}
+
+func WithValue(parent Context, key, value interface{}) Context {
+	if key == nil {
+		panic("key is nil")
+	}
+	if !reflect.TypeOf(key).Comparable() {
+		panic("key is not comparable")
+	}
+	return &valueContext{
+		Context: parent,
+		key:     key,
+		value:   value,
+	}
 }
